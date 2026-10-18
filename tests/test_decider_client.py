@@ -29,13 +29,21 @@ class TestDeciderClient(unittest.TestCase):
     @patch.dict(os.environ, {"DECIDER_URL": "http://localhost:8000"})
     def test_valid_choice_is_returned(self, mock_urlopen):
         mock_urlopen.return_value = FakeResponse({
+            "model": "strands-decider-latest",
             "answers": {
                 "next_action": {
                     "type": "choice",
                     "choice": "inspect_iam",
+                    "probabilities": {
+                        "inspect_iam": 0.9,
+                        "inspect_ec2": 0.03,
+                        "review_cloudtrail": 0.04,
+                        "human_review": 0.03,
+                    },
                     "confidence": 0.9,
                 }
-            }
+            },
+            "usage": {"input_tokens": 20, "output_tokens": 2},
         })
 
         self.assertEqual(select_action("IAM policy changed"), "inspect_iam")
