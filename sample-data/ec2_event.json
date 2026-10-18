@@ -1,0 +1,6 @@
+{
+  "instance_id": "i-demo12345",
+  "public_ip": "203.0.113.10",
+  "ssh_open_to_world": true,
+  "state": "running"
+}

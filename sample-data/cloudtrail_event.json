@@ -1,0 +1,7 @@
+{
+  "event_name": "StopLogging",
+  "principal": "demo-user",
+  "event_time": "2026-10-18T09:00:00Z",
+  "source_ip": "203.0.113.20",
+  "error_code": null
+}

@@ -1,0 +1,8 @@
+{
+  "event_name": "AttachUserPolicy",
+  "principal": "demo-user",
+  "changes": [
+    "A new policy was attached",
+    "The policy grants additional permissions"
+  ]
+}
