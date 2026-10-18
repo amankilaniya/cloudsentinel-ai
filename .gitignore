@@ -1,17 +1,28 @@
+# Python
 __pycache__/
 *.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
 .venv/
 venv/
+
+# Secrets and local configuration
 .env
 .env.*
 !.env.example
 .aws/
 *.pem
 *.key
+
+# Model checkpoints and large artifacts
 checkpoints/
 models/
 *.safetensors
 *.pt
 *.pth
 *.bin
+
+# Logs
 *.log
