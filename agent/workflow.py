@@ -34,3 +34,43 @@ def investigate(
         "selected_tool": action,
         "result": result,
     }
+
+
+def investigate_with_decider(
+    finding: str,
+    event: dict[str, Any] | None,
+    evidence: list[str] | None = None,
+) -> dict[str, Any]:
+    """Select an action with Decider, then run the approved tool."""
+    from agent.decision_request import build_decision_request
+    from agent.decider_client import select_action
+
+    if not isinstance(event, dict) or not event:
+        return {
+            "status": "human_review_required",
+            "selected_tool": "human_review",
+            "reason": "Missing event data.",
+            "result": None,
+        }
+
+    try:
+        decision = build_decision_request(finding, evidence)
+    except (AttributeError, TypeError, ValueError):
+        return {
+            "status": "human_review_required",
+            "selected_tool": "human_review",
+            "reason": "Invalid or missing security finding.",
+            "result": None,
+        }
+
+    action = select_action(decision["state"])
+
+    if action == "human_review":
+        return {
+            "status": "human_review_required",
+            "selected_tool": "human_review",
+            "reason": "Decider unavailable or human review selected.",
+            "result": None,
+        }
+
+    return investigate(action, event)
