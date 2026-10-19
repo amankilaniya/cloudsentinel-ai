@@ -55,17 +55,16 @@ def investigate_with_decider(
 
     try:
         decision = build_decision_request(finding, evidence)
+        selection = select_action(decision["state"])
+        action = (
+            selection.get("selected_tool")
+            if isinstance(selection, dict)
+            else selection
+        )
     except (AttributeError, TypeError, ValueError):
-        return {
-            "status": "human_review_required",
-            "selected_tool": "human_review",
-            "reason": "Invalid or missing security finding.",
-            "result": None,
-        }
+        action = "human_review"
 
-    action = select_action(decision["state"])
-
-    if action == "human_review":
+    if action not in TOOL_HANDLERS:
         return {
             "status": "human_review_required",
             "selected_tool": "human_review",

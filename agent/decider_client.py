@@ -1,64 +1,93 @@
 """HTTP client for the Strands Decider System One API."""
-import json
+
 import os
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from typing import Any
 
-from pydantic import ValidationError
-from strands_decider.schema import SystemOneRequest, SystemOneResponse
+import requests
 
-from agent.decision_options import DECISION_OPTIONS
+from agent.decision_options import DECISION_OPTIONS, DECISION_QUESTION
 
-OPTION_DESCRIPTIONS = {
-    "inspect_iam": "Investigate IAM users, roles, access keys, or policy changes.",
-    "inspect_ec2": "Investigate EC2 instances, network exposure, or security groups.",
-    "review_cloudtrail": "Review CloudTrail activity for suspicious or sensitive actions.",
-    "human_review": "Request human review when evidence is insufficient or ambiguous.",
-}
 
-def select_action(state: str) -> str:
-    """Ask Decider for an action; default safely to human review."""
-    endpoint = os.getenv("DECIDER_URL", "").strip().rstrip("/")
-    model = os.getenv("DECIDER_MODEL", "strands-decider-latest")
-    if not endpoint or not isinstance(state, str) or not state.strip():
-        return "human_review"
+DEFAULT_DECIDER_URL = "http://127.0.0.1:8000"
+
+
+def select_investigation_action(
+    finding: str,
+    evidence: list[str] | None = None,
+    timeout: float = 5.0,
+) -> dict[str, Any]:
+    """Ask Decider to select an investigation action.
+
+    Returns human_review when the service is unavailable or its answer
+    cannot be validated.
+    """
+    finding = finding.strip()
+    if not finding:
+        raise ValueError("Finding must not be empty.")
+
+    base_url = os.getenv("DECIDER_BASE_URL", DEFAULT_DECIDER_URL).rstrip("/")
+    state = (
+        f"{DECISION_QUESTION.strip()}\n\n"
+        f"Security finding: {finding}\n"
+        f"Evidence collected: {evidence or []}"
+    )
 
     payload = {
-        "model": model,
         "state": state,
+        "model": "strands-decider-latest",
         "questions": {
             "next_action": {
                 "type": "choice",
                 "instructions": (
-                    "Choose the most useful next cloud-security investigation "
-                    "action. Choose human_review if evidence is insufficient "
-                    "or ambiguous."
+                    "Choose the most useful next investigation action. "
+                    "Choose human_review if evidence is insufficient."
                 ),
-                "criteria": OPTION_DESCRIPTIONS,
+                "criteria": {
+                    option: option.replace("_", " ")
+                    for option in [*DECISION_OPTIONS]
+                },
             }
         },
     }
 
     try:
-        validated = SystemOneRequest.model_validate(payload)
-        request = Request(
-            f"{endpoint}/v1/systemone",
-            data=validated.model_dump_json().encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
+        response = requests.post(
+            f"{base_url}/v1/systemone",
+            json=payload,
+            timeout=timeout,
         )
-        with urlopen(request, timeout=10) as response:
-            raw = json.loads(response.read().decode("utf-8"))
+        response.raise_for_status()
+        data = response.json()
+        answer = data["answers"]["next_action"]
+        action = answer["choice"]
 
-        result = SystemOneResponse.model_validate(raw)
-        answer = result.answers.get("next_action")
-        if answer is not None and answer.type == "choice":
-            if answer.choice in DECISION_OPTIONS:
-                return answer.choice
-    except (
-        HTTPError, URLError, TimeoutError, OSError,
-        ValueError, TypeError, KeyError, ValidationError,
-    ):
-        pass
+        if action not in DECISION_OPTIONS:
+            raise ValueError("Decider returned an unsupported action.")
 
-    return "human_review"
+        return {
+            "selected_tool": action,
+            "confidence": answer.get("confidence"),
+            "model": data.get("model"),
+            "status": "selected",
+        }
+
+    except (requests.RequestException, ValueError, KeyError, TypeError):
+        return {
+            "selected_tool": "human_review",
+            "confidence": None,
+            "model": None,
+            "status": "human_review_required",
+        }
+
+
+def select_action(
+    finding: str,
+    evidence: list[str] | None = None,
+    timeout: float = 5.0,
+) -> dict[str, Any]:
+    """Compatibility wrapper for the workflow's action-selection API."""
+    return select_investigation_action(
+        finding=finding,
+        evidence=evidence,
+        timeout=timeout,
+    )

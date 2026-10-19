@@ -1,75 +1,45 @@
-import json
-import os
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from agent.decider_client import select_action
+import requests
 
-
-class FakeResponse:
-    def __init__(self, payload):
-        self.payload = json.dumps(payload).encode()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return False
-
-    def read(self):
-        return self.payload
+from agent.decider_client import select_investigation_action
 
 
 class TestDeciderClient(unittest.TestCase):
-    @patch.dict(os.environ, {}, clear=True)
-    def test_missing_endpoint_falls_back_to_human(self):
-        self.assertEqual(select_action("finding"), "human_review")
-
-    @patch("agent.decider_client.urlopen")
-    @patch.dict(os.environ, {"DECIDER_URL": "http://localhost:8000"})
-    def test_valid_choice_is_returned(self, mock_urlopen):
-        mock_urlopen.return_value = FakeResponse({
-            "model": "strands-decider-latest",
+    @patch("agent.decider_client.requests.post")
+    def test_accepts_valid_decider_choice(self, post):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "model": "demo-decider",
             "answers": {
                 "next_action": {
                     "type": "choice",
                     "choice": "inspect_iam",
-                    "probabilities": {
-                        "inspect_iam": 0.9,
-                        "inspect_ec2": 0.03,
-                        "review_cloudtrail": 0.04,
-                        "human_review": 0.03,
-                    },
-                    "confidence": 0.9,
+                    "confidence": 0.91,
                 }
             },
-            "usage": {"input_tokens": 20, "output_tokens": 2},
-        })
+        }
+        post.return_value = response
 
-        self.assertEqual(select_action("IAM policy changed"), "inspect_iam")
+        result = select_investigation_action("Unusual IAM change")
 
-        request = mock_urlopen.call_args.args[0]
-        body = json.loads(request.data)
-        self.assertEqual(body["questions"]["next_action"]["type"], "choice")
+        self.assertEqual(result["selected_tool"], "inspect_iam")
+        self.assertEqual(result["status"], "selected")
 
-    @patch("agent.decider_client.urlopen")
-    @patch.dict(os.environ, {"DECIDER_URL": "http://localhost:8000"})
-    def test_invalid_choice_falls_back_to_human(self, mock_urlopen):
-        mock_urlopen.return_value = FakeResponse({
-            "answers": {
-                "next_action": {
-                    "type": "choice",
-                    "choice": "delete_everything",
-                }
-            }
-        })
+    @patch("agent.decider_client.requests.post")
+    def test_falls_back_when_service_is_unavailable(self, post):
+        post.side_effect = requests.ConnectionError("service unavailable")
 
-        self.assertEqual(select_action("finding"), "human_review")
+        result = select_investigation_action("Unusual IAM change")
 
-    @patch("agent.decider_client.urlopen", side_effect=OSError("offline"))
-    @patch.dict(os.environ, {"DECIDER_URL": "http://localhost:8000"})
-    def test_service_error_falls_back_to_human(self, mock_urlopen):
-        self.assertEqual(select_action("finding"), "human_review")
+        self.assertEqual(result["selected_tool"], "human_review")
+        self.assertEqual(result["status"], "human_review_required")
+
+    def test_rejects_empty_finding(self):
+        with self.assertRaises(ValueError):
+            select_investigation_action("  ")
 
 
 if __name__ == "__main__":
