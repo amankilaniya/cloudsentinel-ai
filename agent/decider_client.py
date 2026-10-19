@@ -1,6 +1,7 @@
 """HTTP client for the Strands Decider System One API."""
 
 import os
+import time  # NEW: to measure how long Decider takes
 from typing import Any
 
 import requests
@@ -10,6 +11,10 @@ from agent.decision_options import DECISION_OPTIONS, DECISION_QUESTION
 
 DEFAULT_DECIDER_URL = "http://127.0.0.1:8000"
 
+# NEW: below this confidence, we do not trust Decider and ask a human.
+# 0.9 is only a starting value; we tune it after testing real alerts.
+MIN_CONFIDENCE = float(os.getenv("DECIDER_MIN_CONFIDENCE", "0.9"))
+
 
 def select_investigation_action(
     finding: str,
@@ -18,8 +23,8 @@ def select_investigation_action(
 ) -> dict[str, Any]:
     """Ask Decider to select an investigation action.
 
-    Returns human_review when the service is unavailable or its answer
-    cannot be validated.
+    Returns human_review when the service is unavailable, its answer
+    cannot be validated, or its confidence is too low.
     """
     finding = finding.strip()
     if not finding:
@@ -50,6 +55,8 @@ def select_investigation_action(
         },
     }
 
+    started = time.perf_counter()  # NEW: start the stopwatch
+
     try:
         response = requests.post(
             f"{base_url}/v1/systemone",
@@ -64,19 +71,40 @@ def select_investigation_action(
         if action not in DECISION_OPTIONS:
             raise ValueError("Decider returned an unsupported action.")
 
+        latency_ms = round((time.perf_counter() - started) * 1000, 1)  # NEW
+        confidence = answer.get("confidence")
+
+        # NEW: low confidence -> do not trust the choice, ask a human
+        if confidence is None or confidence < MIN_CONFIDENCE:
+            return {
+                "selected_tool": "human_review",
+                "model_choice": action,  # what Decider wanted, kept for the log
+                "confidence": confidence,
+                "model": data.get("model"),
+                "status": "human_review_required",
+                "reason": "low_confidence",
+                "latency_ms": latency_ms,
+            }
+
         return {
             "selected_tool": action,
-            "confidence": answer.get("confidence"),
+            "model_choice": action,  # NEW
+            "confidence": confidence,
             "model": data.get("model"),
             "status": "selected",
+            "reason": "decider_choice",  # NEW
+            "latency_ms": latency_ms,  # NEW
         }
 
     except (requests.RequestException, ValueError, KeyError, TypeError):
         return {
             "selected_tool": "human_review",
+            "model_choice": None,  # NEW
             "confidence": None,
             "model": None,
             "status": "human_review_required",
+            "reason": "service_error",  # NEW
+            "latency_ms": round((time.perf_counter() - started) * 1000, 1),  # NEW
         }
 
 
