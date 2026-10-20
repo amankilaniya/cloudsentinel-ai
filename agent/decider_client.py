@@ -1,7 +1,7 @@
 """HTTP client for the Strands Decider System One API."""
 
 import os
-import time  # NEW: to measure how long Decider takes
+import time
 from typing import Any
 
 import requests
@@ -11,15 +11,26 @@ from agent.decision_options import DECISION_OPTIONS, DECISION_QUESTION
 
 DEFAULT_DECIDER_URL = "http://127.0.0.1:8000"
 
-# NEW: below this confidence, we do not trust Decider and ask a human.
-# 0.9 is only a starting value; we tune it after testing real alerts.
+# The model is slow on a laptop without a GPU (about 40-55 s per decision),
+# so the default wait is long. It can be changed with DECIDER_TIMEOUT.
+DEFAULT_TIMEOUT = float(os.getenv("DECIDER_TIMEOUT", "120"))
+
+# Below this confidence we do not trust Decider and ask a human.
 MIN_CONFIDENCE = float(os.getenv("DECIDER_MIN_CONFIDENCE", "0.9"))
+
+# The model reads these sentences, so they should be clear.
+OPTION_DESCRIPTIONS = {
+    "inspect_iam": "Investigate IAM users, roles, access keys, or policy changes.",
+    "inspect_ec2": "Investigate EC2 instances, network exposure, or security groups.",
+    "review_cloudtrail": "Review CloudTrail activity for suspicious or sensitive actions.",
+    "human_review": "Request human review when evidence is insufficient or ambiguous.",
+}
 
 
 def select_investigation_action(
     finding: str,
     evidence: list[str] | None = None,
-    timeout: float = 5.0,
+    timeout: float = DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
     """Ask Decider to select an investigation action.
 
@@ -47,15 +58,12 @@ def select_investigation_action(
                     "Choose the most useful next investigation action. "
                     "Choose human_review if evidence is insufficient."
                 ),
-                "criteria": {
-                    option: option.replace("_", " ")
-                    for option in [*DECISION_OPTIONS]
-                },
+                "criteria": OPTION_DESCRIPTIONS,
             }
         },
     }
 
-    started = time.perf_counter()  # NEW: start the stopwatch
+    started = time.perf_counter()
 
     try:
         response = requests.post(
@@ -71,15 +79,16 @@ def select_investigation_action(
         if action not in DECISION_OPTIONS:
             raise ValueError("Decider returned an unsupported action.")
 
-        latency_ms = round((time.perf_counter() - started) * 1000, 1)  # NEW
+        latency_ms = round((time.perf_counter() - started) * 1000, 1)
         confidence = answer.get("confidence")
+        probabilities = answer.get("probabilities")
 
-        # NEW: low confidence -> do not trust the choice, ask a human
         if confidence is None or confidence < MIN_CONFIDENCE:
             return {
                 "selected_tool": "human_review",
-                "model_choice": action,  # what Decider wanted, kept for the log
+                "model_choice": action,
                 "confidence": confidence,
+                "probabilities": probabilities,
                 "model": data.get("model"),
                 "status": "human_review_required",
                 "reason": "low_confidence",
@@ -88,30 +97,32 @@ def select_investigation_action(
 
         return {
             "selected_tool": action,
-            "model_choice": action,  # NEW
+            "model_choice": action,
             "confidence": confidence,
+            "probabilities": probabilities,
             "model": data.get("model"),
             "status": "selected",
-            "reason": "decider_choice",  # NEW
-            "latency_ms": latency_ms,  # NEW
+            "reason": "decider_choice",
+            "latency_ms": latency_ms,
         }
 
     except (requests.RequestException, ValueError, KeyError, TypeError):
         return {
             "selected_tool": "human_review",
-            "model_choice": None,  # NEW
+            "model_choice": None,
             "confidence": None,
+            "probabilities": None,
             "model": None,
             "status": "human_review_required",
-            "reason": "service_error",  # NEW
-            "latency_ms": round((time.perf_counter() - started) * 1000, 1),  # NEW
+            "reason": "service_error",
+            "latency_ms": round((time.perf_counter() - started) * 1000, 1),
         }
 
 
 def select_action(
     finding: str,
     evidence: list[str] | None = None,
-    timeout: float = 5.0,
+    timeout: float = DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
     """Compatibility wrapper for the workflow's action-selection API."""
     return select_investigation_action(
