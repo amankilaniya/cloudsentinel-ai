@@ -16,7 +16,7 @@ DEFAULT_DECIDER_URL = "http://127.0.0.1:8000"
 DEFAULT_TIMEOUT = float(os.getenv("DECIDER_TIMEOUT", "120"))
 
 # Below this confidence we do not trust Decider and ask a human.
-MIN_CONFIDENCE = float(os.getenv("DECIDER_MIN_CONFIDENCE", "0.9"))
+MIN_CONFIDENCE = float(os.getenv("DECIDER_MIN_CONFIDENCE", "0.4"))
 
 # The model reads these sentences, so they should be clear.
 OPTION_DESCRIPTIONS = {
